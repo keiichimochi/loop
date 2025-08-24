@@ -28,6 +28,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta httpEquiv="Cross-Origin-Embedder-Policy" content="require-corp" />
+        <meta httpEquiv="Cross-Origin-Opener-Policy" content="same-origin" />
         <Meta />
         <Links />
       </head>

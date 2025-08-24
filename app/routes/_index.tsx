@@ -1,138 +1,809 @@
+import { useState, useRef, useEffect } from "react";
 import type { MetaFunction } from "@remix-run/node";
+import { Play, Pause, RotateCcw, Download, Upload, Loader2, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "lucide-react";
+import { createSimpleLoop, downloadBlob } from "~/utils/simpleVideoProcessor";
 
 export const meta: MetaFunction = () => {
   return [
-    { title: "New Remix App" },
-    { name: "description", content: "Welcome to Remix!" },
+    { title: "Video Loop Creator" },
+    { name: "description", content: "動画をトリミングしてループ動画を作成" },
   ];
 };
 
+interface VideoTrimState {
+  startTime: number;
+  endTime: number;
+  duration: number;
+  currentTime: number;
+  isPlaying: boolean;
+  videoFile: File | null;
+  videoUrl: string | null;
+  isProcessing: boolean;
+  frameRate: number;
+  startThumbnail: string | null;
+  endThumbnail: string | null;
+  isGeneratingThumbnails: boolean;
+}
+
 export default function Index() {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [state, setState] = useState<VideoTrimState>({
+    startTime: 0,
+    endTime: 0,
+    duration: 0,
+    currentTime: 0,
+    isPlaying: false,
+    videoFile: null,
+    videoUrl: null,
+    isProcessing: false,
+    frameRate: 30, // デフォルト30fps
+    startThumbnail: null,
+    endThumbnail: null,
+    isGeneratingThumbnails: false,
+  });
+
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file && file.type.startsWith("video/")) {
+      const url = URL.createObjectURL(file);
+      setState(prev => ({
+        ...prev,
+        videoFile: file,
+        videoUrl: url,
+        startTime: 0,
+        endTime: 0,
+        currentTime: 0,
+        isPlaying: false,
+      }));
+    }
+  };
+
+  const handleVideoMetadataLoaded = () => {
+    if (videoRef.current) {
+      const duration = videoRef.current.duration;
+      
+      // フレームレートを推定（一般的な値から選択）
+      // より正確にはメタデータから取得する必要があるが、ブラウザAPIでは制限がある
+      let estimatedFrameRate = 30; // デフォルト
+      
+      // ファイル名や一般的なパターンから推定
+      if (state.videoFile?.name.toLowerCase().includes('60fps') || 
+          state.videoFile?.name.toLowerCase().includes('60p')) {
+        estimatedFrameRate = 60;
+      } else if (state.videoFile?.name.toLowerCase().includes('24fps') ||
+                 state.videoFile?.name.toLowerCase().includes('24p')) {
+        estimatedFrameRate = 24;
+      } else if (state.videoFile?.name.toLowerCase().includes('25fps') ||
+                 state.videoFile?.name.toLowerCase().includes('25p')) {
+        estimatedFrameRate = 25;
+      }
+      
+      setState(prev => ({
+        ...prev,
+        duration,
+        endTime: duration,
+        frameRate: estimatedFrameRate,
+      }));
+    }
+  };
+
+  const handleTimeUpdate = () => {
+    if (videoRef.current) {
+      const currentTime = videoRef.current.currentTime;
+      setState(prev => ({ ...prev, currentTime }));
+
+      // ループ機能：終了時間に達したら開始時間に戻る
+      if (currentTime >= state.endTime && state.endTime > 0) {
+        videoRef.current.currentTime = state.startTime;
+      }
+    }
+  };
+
+  const togglePlayPause = () => {
+    if (videoRef.current) {
+      if (state.isPlaying) {
+        videoRef.current.pause();
+      } else {
+        videoRef.current.play();
+      }
+      setState(prev => ({ ...prev, isPlaying: !prev.isPlaying }));
+    }
+  };
+
+  const seekToTime = (time: number) => {
+    if (videoRef.current) {
+      videoRef.current.currentTime = time;
+      setState(prev => ({ ...prev, currentTime: time }));
+    }
+  };
+
+  const setStartTime = () => {
+    setState(prev => ({ ...prev, startTime: prev.currentTime }));
+  };
+
+  const setEndTime = () => {
+    setState(prev => ({ ...prev, endTime: prev.currentTime }));
+  };
+
+  const resetLoop = () => {
+    seekToTime(state.startTime);
+  };
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    const ms = Math.floor((seconds % 1) * 100);
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
+  };
+
+  const downloadLoop = async () => {
+    if (!state.videoFile || state.isProcessing) return;
+
+    try {
+      setState(prev => ({ ...prev, isProcessing: true }));
+      
+      const trimmedBlob = await createSimpleLoop(
+        state.videoFile,
+        state.startTime,
+        state.endTime
+      );
+
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const filename = `loop-${timestamp}.webm`;
+      
+      downloadBlob(trimmedBlob, filename);
+    } catch (error) {
+      console.error('Error processing video:', error);
+      alert('動画の処理中にエラーが発生したナリ！ブラウザでWebMフォーマットがサポートされていない可能性がありますナリ。');
+    } finally {
+      setState(prev => ({ ...prev, isProcessing: false }));
+    }
+  };
+
+  // キーボードショートカット
+  useEffect(() => {
+    const handleKeyPress = (event: KeyboardEvent) => {
+      if (!videoRef.current) return;
+      
+      switch (event.code) {
+        case 'Space':
+          event.preventDefault();
+          togglePlayPause();
+          break;
+        case 'KeyI':
+          event.preventDefault();
+          setStartTime();
+          break;
+        case 'KeyO':
+          event.preventDefault();
+          setEndTime();
+          break;
+        case 'KeyR':
+          event.preventDefault();
+          resetLoop();
+          break;
+        case 'ArrowLeft':
+          event.preventDefault();
+          if (event.ctrlKey || event.metaKey) {
+            // Ctrl/Cmd + 左矢印でフレーム単位で戻る
+            seekToPreviousFrame();
+          } else if (event.shiftKey) {
+            // Shift + 左矢印で0.1秒戻る
+            seekToTime(Math.max(0, state.currentTime - 0.1));
+          } else {
+            // 左矢印で1秒戻る
+            seekToPreviousSecond();
+          }
+          break;
+        case 'ArrowRight':
+          event.preventDefault();
+          if (event.ctrlKey || event.metaKey) {
+            // Ctrl/Cmd + 右矢印でフレーム単位で進む
+            seekToNextFrame();
+          } else if (event.shiftKey) {
+            // Shift + 右矢印で0.1秒進む
+            seekToTime(Math.min(state.duration, state.currentTime + 0.1));
+          } else {
+            // 右矢印で1秒進む
+            seekToNextSecond();
+          }
+          break;
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyPress);
+    return () => document.removeEventListener('keydown', handleKeyPress);
+  }, [state.currentTime, state.duration, togglePlayPause, setStartTime, setEndTime, resetLoop]);
+
+  const jumpToLoop = () => {
+    seekToTime(state.startTime);
+  };
+
+  const previewLoop = () => {
+    // 現在の時間を終了時間として設定してからループ再生を開始
+    setState(prev => ({ ...prev, endTime: prev.currentTime }));
+    seekToTime(state.startTime);
+    if (videoRef.current) {
+      videoRef.current.play();
+      setState(prev => ({ ...prev, isPlaying: true }));
+    }
+  };
+
+  // フレーム単位での操作
+  const getFrameDuration = () => {
+    return 1 / state.frameRate;
+  };
+
+  const seekToNextFrame = () => {
+    const frameDuration = getFrameDuration();
+    const newTime = Math.min(state.duration, state.currentTime + frameDuration);
+    seekToTime(newTime);
+  };
+
+  const seekToPreviousFrame = () => {
+    const frameDuration = getFrameDuration();
+    const newTime = Math.max(0, state.currentTime - frameDuration);
+    seekToTime(newTime);
+  };
+
+  const seekToNextSecond = () => {
+    const newTime = Math.min(state.duration, state.currentTime + 1);
+    seekToTime(newTime);
+  };
+
+  const seekToPreviousSecond = () => {
+    const newTime = Math.max(0, state.currentTime - 1);
+    seekToTime(newTime);
+  };
+
+  // サムネイル生成関数
+  const generateThumbnail = (time: number): Promise<string> => {
+    return new Promise((resolve) => {
+      if (!videoRef.current) {
+        resolve('');
+        return;
+      }
+
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      
+      if (!ctx) {
+        resolve('');
+        return;
+      }
+
+      const video = videoRef.current;
+      canvas.width = 160; // サムネイルサイズ
+      canvas.height = 90;
+
+      const originalTime = video.currentTime;
+      video.currentTime = time;
+
+      const onSeeked = () => {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const dataURL = canvas.toDataURL('image/jpeg', 0.8);
+        video.currentTime = originalTime; // 元の時間に戻す
+        video.removeEventListener('seeked', onSeeked);
+        resolve(dataURL);
+      };
+
+      video.addEventListener('seeked', onSeeked);
+    });
+  };
+
+  // サムネイルを更新する関数
+  const updateThumbnails = async () => {
+    if (!videoRef.current || !state.videoUrl) return;
+
+    setState(prev => ({ ...prev, isGeneratingThumbnails: true }));
+
+    try {
+      const [startThumb, endThumb] = await Promise.all([
+        generateThumbnail(state.startTime),
+        generateThumbnail(state.endTime)
+      ]);
+
+      setState(prev => ({
+        ...prev,
+        startThumbnail: startThumb,
+        endThumbnail: endThumb,
+        isGeneratingThumbnails: false
+      }));
+    } catch (error) {
+      console.error('Error generating thumbnails:', error);
+      setState(prev => ({ ...prev, isGeneratingThumbnails: false }));
+    }
+  };
+
+  // 開始・終了時間が変更されたときにサムネイルを更新
+  useEffect(() => {
+    if (state.videoUrl && state.duration > 0) {
+      updateThumbnails();
+    }
+  }, [state.startTime, state.endTime, state.videoUrl, state.duration]);
+
   return (
-    <div className="flex h-screen items-center justify-center">
-      <div className="flex flex-col items-center gap-16">
-        <header className="flex flex-col items-center gap-9">
-          <h1 className="leading text-2xl font-bold text-gray-800 dark:text-gray-100">
-            Welcome to <span className="sr-only">Remix</span>
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 text-white">
+      <div className="container mx-auto px-4 py-8">
+        <header className="text-center mb-8">
+          <h1 className="text-4xl font-bold mb-2 bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+            Video Loop Creator
           </h1>
-          <div className="h-[144px] w-[434px]">
-            <img
-              src="/logo-light.png"
-              alt="Remix"
-              className="block w-full dark:hidden"
-            />
-            <img
-              src="/logo-dark.png"
-              alt="Remix"
-              className="hidden w-full dark:block"
-            />
+          <p className="text-slate-300 mb-4">動画をトリミングして完璧なループを作成ナリ</p>
+          
+          {/* キーボードショートカット説明 */}
+          <div className="bg-slate-800 rounded-lg p-4 max-w-3xl mx-auto">
+            <div className="text-slate-400 text-sm mb-2">キーボードショートカット</div>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 text-xs">
+              <div><kbd className="bg-slate-700 px-2 py-1 rounded">Space</kbd> 再生/停止</div>
+              <div><kbd className="bg-slate-700 px-2 py-1 rounded">I</kbd> 開始点設定</div>
+              <div><kbd className="bg-slate-700 px-2 py-1 rounded">O</kbd> 終了点設定</div>
+              <div><kbd className="bg-slate-700 px-2 py-1 rounded">R</kbd> ループ先頭へ</div>
+              <div><kbd className="bg-slate-700 px-2 py-1 rounded">←→</kbd> 1秒移動</div>
+              <div><kbd className="bg-slate-700 px-2 py-1 rounded">Shift+←→</kbd> 0.1秒移動</div>
+              <div><kbd className="bg-slate-700 px-2 py-1 rounded">Ctrl+←→</kbd> 1フレーム移動</div>
+              <div><kbd className="bg-slate-700 px-2 py-1 rounded">Cmd+←→</kbd> 1フレーム移動</div>
+            </div>
           </div>
         </header>
-        <nav className="flex flex-col items-center justify-center gap-4 rounded-3xl border border-gray-200 p-6 dark:border-gray-700">
-          <p className="leading-6 text-gray-700 dark:text-gray-200">
-            What&apos;s next?
-          </p>
-          <ul>
-            {resources.map(({ href, text, icon }) => (
-              <li key={href}>
-                <a
-                  className="group flex items-center gap-3 self-stretch p-3 leading-normal text-blue-700 hover:underline dark:text-blue-500"
-                  href={href}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  {icon}
-                  {text}
-                </a>
-              </li>
-            ))}
-          </ul>
-        </nav>
+
+        <div className="max-w-4xl mx-auto">
+          {/* ファイルアップロード */}
+          {!state.videoUrl && (
+            <div className="border-2 border-dashed border-slate-600 rounded-lg p-12 text-center mb-8">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="video/*"
+                onChange={handleFileUpload}
+                className="hidden"
+              />
+              <Upload className="mx-auto mb-4 text-slate-400" size={48} />
+              <p className="text-slate-300 mb-4">動画ファイルをアップロードしてくださいナリ</p>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="bg-blue-600 hover:bg-blue-700 px-6 py-3 rounded-lg font-medium transition-colors"
+              >
+                ファイルを選択
+              </button>
+            </div>
+          )}
+
+          {/* 動画プレイヤー */}
+          {state.videoUrl && (
+            <div className="bg-slate-800 rounded-lg p-6 mb-8">
+              <div className="relative mb-6">
+                <video
+                  ref={videoRef}
+                  src={state.videoUrl}
+                  onLoadedMetadata={handleVideoMetadataLoaded}
+                  onTimeUpdate={handleTimeUpdate}
+                  className="w-full rounded-lg"
+                  style={{ maxHeight: '400px' }}
+                />
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  {!state.isPlaying && (
+                    <button
+                      onClick={togglePlayPause}
+                      className="bg-black bg-opacity-50 p-4 rounded-full pointer-events-auto hover:bg-opacity-70 transition-colors"
+                    >
+                      <Play className="text-white" size={32} />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* コントロールパネル */}
+              <div className="space-y-4">
+                {/* 再生コントロール */}
+                <div className="flex items-center justify-center space-x-3">
+                  <button
+                    onClick={togglePlayPause}
+                    className="bg-blue-600 hover:bg-blue-700 p-3 rounded-full transition-colors"
+                    title="再生/停止 (Space)"
+                  >
+                    {state.isPlaying ? <Pause size={20} /> : <Play size={20} />}
+                  </button>
+                  <button
+                    onClick={resetLoop}
+                    className="bg-green-600 hover:bg-green-700 p-3 rounded-full transition-colors"
+                    title="ループ先頭へ (R)"
+                  >
+                    <RotateCcw size={20} />
+                  </button>
+                  <button
+                    onClick={previewLoop}
+                    className="bg-yellow-600 hover:bg-yellow-700 px-4 py-3 rounded-full transition-colors font-medium"
+                    title="開始点から現在時間までをループ再生"
+                  >
+                    現在時間までループ再生
+                  </button>
+                  <button
+                    onClick={downloadLoop}
+                    disabled={state.isProcessing}
+                    className="bg-purple-600 hover:bg-purple-700 disabled:bg-purple-400 p-3 rounded-full transition-colors"
+                    title="ループ動画をダウンロード"
+                  >
+                    {state.isProcessing ? <Loader2 size={20} className="animate-spin" /> : <Download size={20} />}
+                  </button>
+                </div>
+
+                {/* 改良されたタイムライン */}
+                <div className="space-y-2">
+                  {/* フレーム操作コントロール */}
+                  <div className="flex items-center justify-center space-x-2 mb-2">
+                    <div className="text-xs text-slate-400 mr-2">フレーム操作:</div>
+                    <button
+                      onClick={seekToPreviousSecond}
+                      className="bg-slate-600 hover:bg-slate-500 p-1 rounded transition-colors"
+                      title="1秒戻る"
+                    >
+                      <ChevronsLeft size={16} />
+                    </button>
+                    <button
+                      onClick={seekToPreviousFrame}
+                      className="bg-slate-600 hover:bg-slate-500 p-1 rounded transition-colors"
+                      title={`1フレーム戻る (${(1/state.frameRate * 1000).toFixed(1)}ms)`}
+                    >
+                      <ChevronLeft size={16} />
+                    </button>
+                    <select
+                      value={state.frameRate}
+                      onChange={(e) => setState(prev => ({ ...prev, frameRate: parseInt(e.target.value) }))}
+                      className="bg-slate-600 text-white text-xs rounded px-2 py-1 border border-slate-500 focus:border-blue-400 focus:outline-none min-w-[60px]"
+                      title="フレームレートを変更"
+                    >
+                      <option value="24">24fps</option>
+                      <option value="25">25fps</option>
+                      <option value="30">30fps</option>
+                      <option value="50">50fps</option>
+                      <option value="60">60fps</option>
+                      <option value="120">120fps</option>
+                    </select>
+                    <button
+                      onClick={seekToNextFrame}
+                      className="bg-slate-600 hover:bg-slate-500 p-1 rounded transition-colors"
+                      title={`1フレーム進む (${(1/state.frameRate * 1000).toFixed(1)}ms)`}
+                    >
+                      <ChevronRight size={16} />
+                    </button>
+                    <button
+                      onClick={seekToNextSecond}
+                      className="bg-slate-600 hover:bg-slate-500 p-1 rounded transition-colors"
+                      title="1秒進む"
+                    >
+                      <ChevronsRight size={16} />
+                    </button>
+                  </div>
+                  
+                  <div className="flex justify-between text-xs text-slate-400">
+                    <span>0:00</span>
+                    <span>{formatTime(state.duration)}</span>
+                  </div>
+                  
+                  <div className="relative h-8 bg-slate-700 rounded-lg">
+                    {/* ベースタイムライン */}
+                    <div className="absolute inset-0 rounded-lg overflow-hidden">
+                      {/* 進行状況バー */}
+                      <div
+                        className="bg-blue-500 h-full rounded-lg transition-all duration-100"
+                        style={{ width: `${(state.currentTime / state.duration) * 100}%` }}
+                      />
+                      
+                      {/* ループ範囲表示（設定された範囲） */}
+                      <div
+                        className="absolute top-0 bg-green-400 bg-opacity-40 h-full border-l-2 border-r-2 border-green-400"
+                        style={{
+                          left: `${(state.startTime / state.duration) * 100}%`,
+                          width: `${((state.endTime - state.startTime) / state.duration) * 100}%`,
+                        }}
+                      />
+                      
+                      {/* 現在時間までのプレビュー範囲表示 */}
+                      <div
+                        className="absolute top-0 bg-yellow-400 bg-opacity-20 h-full border-l-2 border-yellow-400"
+                        style={{
+                          left: `${(state.startTime / state.duration) * 100}%`,
+                          width: `${((state.currentTime - state.startTime) / state.duration) * 100}%`,
+                        }}
+                      />
+                    </div>
+                    
+                    {/* 開始時間マーカー */}
+                    <div
+                      className="absolute top-0 w-3 h-8 bg-green-500 rounded cursor-pointer hover:bg-green-400 transition-colors flex items-center justify-center"
+                      style={{ left: `${(state.startTime / state.duration) * 100}%`, transform: 'translateX(-50%)' }}
+                      title={`開始: ${formatTime(state.startTime)}`}
+                    >
+                      <div className="w-1 h-4 bg-white rounded"></div>
+                    </div>
+                    
+                    {/* 終了時間マーカー */}
+                    <div
+                      className="absolute top-0 w-3 h-8 bg-red-500 rounded cursor-pointer hover:bg-red-400 transition-colors flex items-center justify-center"
+                      style={{ left: `${(state.endTime / state.duration) * 100}%`, transform: 'translateX(-50%)' }}
+                      title={`終了: ${formatTime(state.endTime)}`}
+                    >
+                      <div className="w-1 h-4 bg-white rounded"></div>
+                    </div>
+                    
+                    {/* 現在時間マーカー */}
+                    <div
+                      className="absolute top-0 w-1 h-8 bg-blue-300 cursor-pointer"
+                      style={{ left: `${(state.currentTime / state.duration) * 100}%`, transform: 'translateX(-50%)' }}
+                    />
+                    
+                    {/* タイムライン上のクリック可能エリア */}
+                    <div
+                      className="absolute inset-0 cursor-pointer"
+                      onClick={(e) => {
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        const x = e.clientX - rect.left;
+                        const time = (x / rect.width) * state.duration;
+                        seekToTime(time);
+                      }}
+                    />
+                  </div>
+                  
+                  {/* 時間目盛り */}
+                  <div className="relative h-4">
+                    {Array.from({ length: 11 }, (_, i) => (
+                      <div
+                        key={i}
+                        className="absolute text-xs text-slate-500"
+                        style={{ left: `${i * 10}%`, transform: 'translateX(-50%)' }}
+                      >
+                        {formatTime((state.duration * i) / 10)}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 精密コントロール */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-sm">
+                  <div className="text-center space-y-3">
+                    <div className="text-slate-300">開始時間</div>
+                    <div className="flex justify-center">
+                      {state.isGeneratingThumbnails ? (
+                        <div className="w-32 h-18 bg-slate-600 rounded border-2 border-green-400 flex items-center justify-center">
+                          <Loader2 className="animate-spin text-green-400" size={20} />
+                        </div>
+                      ) : state.startThumbnail ? (
+                        <img 
+                          src={state.startThumbnail} 
+                          alt="開始フレーム" 
+                          className="w-32 h-18 object-cover rounded border-2 border-green-400"
+                        />
+                      ) : (
+                        <div className="w-32 h-18 bg-slate-600 rounded border-2 border-green-400 flex items-center justify-center text-slate-400 text-xs">
+                          プレビュー
+                        </div>
+                      )}
+                    </div>
+                    <div className="font-mono text-2xl text-green-400">{formatTime(state.startTime)}</div>
+                    <button
+                      onClick={setStartTime}
+                      className="bg-green-600 hover:bg-green-700 px-4 py-2 rounded transition-colors w-full"
+                    >
+                      現在の時間に設定
+                    </button>
+                    <div className="flex justify-center space-x-1">
+                      <button
+                        onClick={() => setState(prev => ({ ...prev, startTime: Math.max(0, prev.startTime - 0.1) }))}
+                        className="bg-slate-600 hover:bg-slate-500 px-2 py-1 rounded text-xs"
+                      >
+                        -0.1s
+                      </button>
+                      <button
+                        onClick={() => setState(prev => ({ ...prev, startTime: Math.max(0, prev.startTime - 0.01) }))}
+                        className="bg-slate-600 hover:bg-slate-500 px-2 py-1 rounded text-xs"
+                      >
+                        -0.01s
+                      </button>
+                      <button
+                        onClick={() => setState(prev => ({ ...prev, startTime: Math.min(prev.endTime, prev.startTime + 0.01) }))}
+                        className="bg-slate-600 hover:bg-slate-500 px-2 py-1 rounded text-xs"
+                      >
+                        +0.01s
+                      </button>
+                      <button
+                        onClick={() => setState(prev => ({ ...prev, startTime: Math.min(prev.endTime, prev.startTime + 0.1) }))}
+                        className="bg-slate-600 hover:bg-slate-500 px-2 py-1 rounded text-xs"
+                      >
+                        +0.1s
+                      </button>
+                    </div>
+                  </div>
+                  
+                  <div className="text-center space-y-3">
+                    <div className="text-slate-300">現在時間</div>
+                    <div className="font-mono text-2xl text-blue-400">{formatTime(state.currentTime)}</div>
+                    <div className="text-slate-500">/ {formatTime(state.duration)}</div>
+                    <div className="flex justify-center space-x-1">
+                      <button
+                        onClick={() => seekToTime(Math.max(0, state.currentTime - 1))}
+                        className="bg-slate-600 hover:bg-slate-500 px-2 py-1 rounded text-xs"
+                      >
+                        -1s
+                      </button>
+                      <button
+                        onClick={() => seekToTime(Math.max(0, state.currentTime - 0.1))}
+                        className="bg-slate-600 hover:bg-slate-500 px-2 py-1 rounded text-xs"
+                      >
+                        -0.1s
+                      </button>
+                      <button
+                        onClick={() => seekToTime(Math.min(state.duration, state.currentTime + 0.1))}
+                        className="bg-slate-600 hover:bg-slate-500 px-2 py-1 rounded text-xs"
+                      >
+                        +0.1s
+                      </button>
+                      <button
+                        onClick={() => seekToTime(Math.min(state.duration, state.currentTime + 1))}
+                        className="bg-slate-600 hover:bg-slate-500 px-2 py-1 rounded text-xs"
+                      >
+                        +1s
+                      </button>
+                    </div>
+                  </div>
+                  
+                  <div className="text-center space-y-3">
+                    <div className="text-slate-300">終了時間</div>
+                    <div className="flex justify-center">
+                      {state.isGeneratingThumbnails ? (
+                        <div className="w-32 h-18 bg-slate-600 rounded border-2 border-red-400 flex items-center justify-center">
+                          <Loader2 className="animate-spin text-red-400" size={20} />
+                        </div>
+                      ) : state.endThumbnail ? (
+                        <img 
+                          src={state.endThumbnail} 
+                          alt="終了フレーム" 
+                          className="w-32 h-18 object-cover rounded border-2 border-red-400"
+                        />
+                      ) : (
+                        <div className="w-32 h-18 bg-slate-600 rounded border-2 border-red-400 flex items-center justify-center text-slate-400 text-xs">
+                          プレビュー
+                        </div>
+                      )}
+                    </div>
+                    <div className="font-mono text-2xl text-red-400">{formatTime(state.endTime)}</div>
+                    <button
+                      onClick={setEndTime}
+                      className="bg-red-600 hover:bg-red-700 px-4 py-2 rounded transition-colors w-full"
+                    >
+                      現在の時間に設定
+                    </button>
+                    <div className="flex justify-center space-x-1">
+                      <button
+                        onClick={() => setState(prev => ({ ...prev, endTime: Math.max(prev.startTime, prev.endTime - 0.1) }))}
+                        className="bg-slate-600 hover:bg-slate-500 px-2 py-1 rounded text-xs"
+                      >
+                        -0.1s
+                      </button>
+                      <button
+                        onClick={() => setState(prev => ({ ...prev, endTime: Math.max(prev.startTime, prev.endTime - 0.01) }))}
+                        className="bg-slate-600 hover:bg-slate-500 px-2 py-1 rounded text-xs"
+                      >
+                        -0.01s
+                      </button>
+                      <button
+                        onClick={() => setState(prev => ({ ...prev, endTime: Math.min(prev.duration, prev.endTime + 0.01) }))}
+                        className="bg-slate-600 hover:bg-slate-500 px-2 py-1 rounded text-xs"
+                      >
+                        +0.01s
+                      </button>
+                      <button
+                        onClick={() => setState(prev => ({ ...prev, endTime: Math.min(prev.duration, prev.endTime + 0.1) }))}
+                        className="bg-slate-600 hover:bg-slate-500 px-2 py-1 rounded text-xs"
+                      >
+                        +0.1s
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 出力設定 */}
+                <div className="bg-slate-700 rounded-lg p-6 space-y-4">
+                  <div className="text-slate-300 text-lg font-medium text-center">エクスポート設定</div>
+                  
+                  <div className="text-center">
+                    <div className="text-slate-400 text-sm mb-2">
+                      ※ 出力形式：WebM（ブラウザ内処理のため）
+                    </div>
+                  </div>
+                  
+                  <div className="text-center">
+                    <button
+                      onClick={downloadLoop}
+                      disabled={state.isProcessing || !state.videoFile || state.endTime <= state.startTime}
+                      className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 disabled:from-slate-500 disabled:to-slate-500 px-8 py-3 rounded-lg font-medium transition-all duration-200 flex items-center space-x-2 mx-auto"
+                    >
+                      {state.isProcessing ? (
+                        <>
+                          <Loader2 size={20} className="animate-spin" />
+                          <span>処理中...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Download size={20} />
+                          <span>ループ動画をダウンロード</span>
+                        </>
+                      )}
+                    </button>
+                    
+                    {!state.isProcessing && (
+                      <p className="text-slate-400 text-sm mt-2">
+                        ブラウザ内で動画を処理するため数秒かかりますナリ
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {/* ループ情報と統計 */}
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  <div className="bg-slate-700 rounded-lg p-4 text-center">
+                    <div className="text-slate-300 mb-2">設定ループ時間</div>
+                    <div className="text-lg font-mono text-green-400">
+                      {formatTime(state.endTime - state.startTime)}
+                    </div>
+                  </div>
+                  
+                  <div className="bg-slate-700 rounded-lg p-4 text-center">
+                    <div className="text-slate-300 mb-2">現在時間までのループ</div>
+                    <div className="text-lg font-mono text-yellow-400">
+                      {formatTime(state.currentTime - state.startTime)}
+                    </div>
+                  </div>
+                  
+                  <div className="bg-slate-700 rounded-lg p-4 text-center">
+                    <div className="text-slate-300 mb-2">元動画から</div>
+                    <div className="text-lg text-slate-100">
+                      {state.duration > 0 ? `${((state.endTime - state.startTime) / state.duration * 100).toFixed(1)}%` : '0%'}
+                    </div>
+                  </div>
+                  
+                  <div className="bg-slate-700 rounded-lg p-4 text-center">
+                    <div className="text-slate-300 mb-2">推定ファイルサイズ</div>
+                    <div className="text-lg text-slate-100">
+                      {state.videoFile ? 
+                        `~${((state.videoFile.size * (state.endTime - state.startTime) / state.duration) / (1024 * 1024)).toFixed(1)}MB` 
+                        : '--MB'
+                      }
+                    </div>
+                  </div>
+                </div>
+
+                {/* 新しい動画をアップロード */}
+                <div className="text-center pt-4">
+                  <button
+                    onClick={() => {
+                      setState({
+                        startTime: 0,
+                        endTime: 0,
+                        duration: 0,
+                        currentTime: 0,
+                        isPlaying: false,
+                        videoFile: null,
+                        videoUrl: null,
+                        isProcessing: false,
+                        frameRate: 30,
+                        startThumbnail: null,
+                        endThumbnail: null,
+                        isGeneratingThumbnails: false,
+                      });
+                      if (fileInputRef.current) fileInputRef.current.value = '';
+                    }}
+                    className="bg-slate-600 hover:bg-slate-500 px-6 py-3 rounded-lg transition-colors"
+                  >
+                    新しい動画をアップロード
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
 }
-
-const resources = [
-  {
-    href: "https://remix.run/start/quickstart",
-    text: "Quick Start (5 min)",
-    icon: (
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        width="24"
-        height="20"
-        viewBox="0 0 20 20"
-        fill="none"
-        className="stroke-gray-600 group-hover:stroke-current dark:stroke-gray-300"
-      >
-        <path
-          d="M8.51851 12.0741L7.92592 18L15.6296 9.7037L11.4815 7.33333L12.0741 2L4.37036 10.2963L8.51851 12.0741Z"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-    ),
-  },
-  {
-    href: "https://remix.run/start/tutorial",
-    text: "Tutorial (30 min)",
-    icon: (
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        width="24"
-        height="20"
-        viewBox="0 0 20 20"
-        fill="none"
-        className="stroke-gray-600 group-hover:stroke-current dark:stroke-gray-300"
-      >
-        <path
-          d="M4.561 12.749L3.15503 14.1549M3.00811 8.99944H1.01978M3.15503 3.84489L4.561 5.2508M8.3107 1.70923L8.3107 3.69749M13.4655 3.84489L12.0595 5.2508M18.1868 17.0974L16.635 18.6491C16.4636 18.8205 16.1858 18.8205 16.0144 18.6491L13.568 16.2028C13.383 16.0178 13.0784 16.0347 12.915 16.239L11.2697 18.2956C11.047 18.5739 10.6029 18.4847 10.505 18.142L7.85215 8.85711C7.75756 8.52603 8.06365 8.21994 8.39472 8.31453L17.6796 10.9673C18.0223 11.0653 18.1115 11.5094 17.8332 11.7321L15.7766 13.3773C15.5723 13.5408 15.5554 13.8454 15.7404 14.0304L18.1868 16.4767C18.3582 16.6481 18.3582 16.926 18.1868 17.0974Z"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-    ),
-  },
-  {
-    href: "https://remix.run/docs",
-    text: "Remix Docs",
-    icon: (
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        width="24"
-        height="20"
-        viewBox="0 0 20 20"
-        fill="none"
-        className="stroke-gray-600 group-hover:stroke-current dark:stroke-gray-300"
-      >
-        <path
-          d="M9.99981 10.0751V9.99992M17.4688 17.4688C15.889 19.0485 11.2645 16.9853 7.13958 12.8604C3.01467 8.73546 0.951405 4.11091 2.53116 2.53116C4.11091 0.951405 8.73546 3.01467 12.8604 7.13958C16.9853 11.2645 19.0485 15.889 17.4688 17.4688ZM2.53132 17.4688C0.951566 15.8891 3.01483 11.2645 7.13974 7.13963C11.2647 3.01471 15.8892 0.951453 17.469 2.53121C19.0487 4.11096 16.9854 8.73551 12.8605 12.8604C8.73562 16.9853 4.11107 19.0486 2.53132 17.4688Z"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-        />
-      </svg>
-    ),
-  },
-  {
-    href: "https://rmx.as/discord",
-    text: "Join Discord",
-    icon: (
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        width="24"
-        height="20"
-        viewBox="0 0 24 20"
-        fill="none"
-        className="stroke-gray-600 group-hover:stroke-current dark:stroke-gray-300"
-      >
-        <path
-          d="M15.0686 1.25995L14.5477 1.17423L14.2913 1.63578C14.1754 1.84439 14.0545 2.08275 13.9422 2.31963C12.6461 2.16488 11.3406 2.16505 10.0445 2.32014C9.92822 2.08178 9.80478 1.84975 9.67412 1.62413L9.41449 1.17584L8.90333 1.25995C7.33547 1.51794 5.80717 1.99419 4.37748 2.66939L4.19 2.75793L4.07461 2.93019C1.23864 7.16437 0.46302 11.3053 0.838165 15.3924L0.868838 15.7266L1.13844 15.9264C2.81818 17.1714 4.68053 18.1233 6.68582 18.719L7.18892 18.8684L7.50166 18.4469C7.96179 17.8268 8.36504 17.1824 8.709 16.4944L8.71099 16.4904C10.8645 17.0471 13.128 17.0485 15.2821 16.4947C15.6261 17.1826 16.0293 17.8269 16.4892 18.4469L16.805 18.8725L17.3116 18.717C19.3056 18.105 21.1876 17.1751 22.8559 15.9238L23.1224 15.724L23.1528 15.3923C23.5873 10.6524 22.3579 6.53306 19.8947 2.90714L19.7759 2.73227L19.5833 2.64518C18.1437 1.99439 16.6386 1.51826 15.0686 1.25995ZM16.6074 10.7755L16.6074 10.7756C16.5934 11.6409 16.0212 12.1444 15.4783 12.1444C14.9297 12.1444 14.3493 11.6173 14.3493 10.7877C14.3493 9.94885 14.9378 9.41192 15.4783 9.41192C16.0471 9.41192 16.6209 9.93851 16.6074 10.7755ZM8.49373 12.1444C7.94513 12.1444 7.36471 11.6173 7.36471 10.7877C7.36471 9.94885 7.95323 9.41192 8.49373 9.41192C9.06038 9.41192 9.63892 9.93712 9.6417 10.7815C9.62517 11.6239 9.05462 12.1444 8.49373 12.1444Z"
-          strokeWidth="1.5"
-        />
-      </svg>
-    ),
-  },
-];

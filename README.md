@@ -1,40 +1,151 @@
-# Welcome to Remix!
+# Video Loop Creator
 
-- 📖 [Remix docs](https://remix.run/docs)
+動画をトリミングして完璧なループ動画を作成するWebアプリケーションナリ！
 
-## Development
+![Video Loop Creator](https://img.shields.io/badge/Built%20with-Remix-blue)
+![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?logo=typescript&logoColor=white)
+![Tailwind CSS](https://img.shields.io/badge/Tailwind%20CSS-38B2AC?logo=tailwind-css&logoColor=white)
 
-Run the dev server:
+## 🎥 機能
 
-```sh
+- **動画アップロード**: ドラッグ&ドロップまたはファイル選択で動画をアップロード
+- **精密なタイムライン操作**: マウスクリックや細かいボタンで正確な時間指定
+- **フレーム単位の微調整**: 1フレーム単位での正確な編集が可能
+- **可変フレームレート対応**: 24fps～120fpsまで手動設定可能
+- **柔軟なループプレビュー**: 現在時間までのループと設定範囲のループを両方サポート
+- **視覚的な範囲表示**: 黄色（現在時間まで）と緑色（設定範囲）で明確に区別
+- **キーボードショートカット**: 効率的な操作のための豊富なショートカット
+- **WebM出力**: ブラウザ内で動画処理してダウンロード
+- **レスポンシブデザイン**: PC・タブレット・スマホ対応
+
+## ⌨️ キーボードショートカット
+
+| キー | 機能 |
+|------|------|
+| `Space` | 再生/停止 |
+| `I` | 現在の時間を開始点に設定 |
+| `O` | 現在の時間を終了点に設定 |
+| `R` | ループの開始点にジャンプ |
+| `←→` | 1秒単位で移動 |
+| `Shift + ←→` | 0.1秒単位で移動 |
+| `Ctrl/Cmd + ←→` | 1フレーム単位で移動 |
+
+## 🚀 セットアップ
+
+### 前提条件
+
+- Node.js 18以上
+- npm または yarn
+
+### インストール
+
+```bash
+# リポジトリをクローン
+git clone <repository-url>
+cd video-loop-app
+
+# 依存関係をインストール
+npm install
+
+# 開発サーバーを起動
 npm run dev
 ```
 
-## Deployment
+アプリは `http://localhost:5173` で起動しますナリ。
 
-First, build your app for production:
+## 📁 プロジェクト構成
 
-```sh
+```
+video-loop-app/
+├── app/
+│   ├── routes/
+│   │   └── _index.tsx          # メインページ
+│   ├── utils/
+│   │   └── simpleVideoProcessor.ts  # 動画処理ロジック
+│   ├── root.tsx                # アプリのルート
+│   └── tailwind.css           # スタイル
+├── public/                     # 静的ファイル
+└── package.json
+```
+
+## 🛠️ 技術スタック
+
+- **フレームワーク**: [Remix](https://remix.run/) (React Router v7ベース)
+- **スタイリング**: [Tailwind CSS](https://tailwindcss.com/)
+- **アイコン**: [Lucide React](https://lucide.dev/)
+- **TypeScript**: 型安全な開発
+- **動画処理**: ブラウザネイティブのCanvas API + MediaRecorder API
+
+## 🎯 使い方
+
+1. **動画をアップロード**: メイン画面で動画ファイルを選択またはドラッグ&ドロップ
+2. **ループ範囲を設定**: 
+   - タイムラインをクリックして再生位置を移動
+   - `I`キーまたは「開始時間に設定」ボタンでループ開始点を設定
+   - `O`キーまたは「終了時間に設定」ボタンでループ終了点を設定
+   - 細かい調整は±0.01秒、±0.1秒ボタンを使用
+   - **フレーム単位の微調整**: タイムライン上のフレーム操作ボタンまたは`Ctrl/Cmd + ←→`キーで1フレーム単位の移動
+   - フレームレートは24fps～120fpsの間で手動設定可能
+3. **プレビュー**: 
+   - 「現在時間までループ再生」ボタンで開始点から現在時間までをループ再生
+   - 黄色い範囲が現在時間までのループ範囲を表示
+   - 緑色の範囲が設定された最終的なループ範囲
+4. **ダウンロード**: 「ループ動画をダウンロード」ボタンでWebM形式でダウンロード
+
+## 📋 対応フォーマット
+
+### 入力
+- MP4
+- WebM
+- AVI
+- MOV
+- その他ブラウザでサポートされている動画フォーマット
+
+### 出力
+- WebM (VP9コーデック)
+
+## 🔧 開発
+
+### 開発サーバー起動
+```bash
+npm run dev
+```
+
+### ビルド
+```bash
 npm run build
 ```
 
-Then run the app in production mode:
-
-```sh
-npm start
+### プレビュー
+```bash
+npm run preview
 ```
 
-Now you'll need to pick a host to deploy it to.
+## 🌟 特徴
 
-### DIY
+- **ノーサーバー処理**: すべての動画処理がブラウザ内で完結
+- **プライバシー重視**: 動画ファイルが外部に送信されることはありません
+- **高速**: リアルタイムプレビューで効率的な編集
+- **直感的UI**: 使いやすいタイムラインと明確な視覚フィードバック
 
-If you're familiar with deploying Node applications, the built-in Remix app server is production-ready.
+## 📝 制限事項
 
-Make sure to deploy the output of `npm run build`
+- 出力フォーマットはWebMのみ（ブラウザ内処理のため）
+- 非常に大きな動画ファイルは処理に時間がかかる場合があります
+- ブラウザのメモリ制限により、極端に長い動画は処理できない場合があります
 
-- `build/server`
-- `build/client`
+## 🤝 コントリビューション
 
-## Styling
+1. このリポジトリをフォーク
+2. 機能ブランチを作成 (`git checkout -b feature/amazing-feature`)
+3. 変更をコミット (`git commit -m 'Add some amazing feature'`)
+4. ブランチにプッシュ (`git push origin feature/amazing-feature`)
+5. Pull Requestを作成
 
-This template comes with [Tailwind CSS](https://tailwindcss.com/) already configured for a simple default starting experience. You can use whatever css framework you prefer. See the [Vite docs on css](https://vitejs.dev/guide/features.html#css) for more information.
+## 📄 ライセンス
+
+このプロジェクトはMITライセンスの下で公開されています。
+
+---
+
+作成者: AI Assistant ナリ！🤖

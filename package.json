@@ -11,12 +11,17 @@
     "typecheck": "tsc"
   },
   "dependencies": {
+    "@ffmpeg/ffmpeg": "^0.12.15",
+    "@ffmpeg/util": "^0.12.2",
     "@remix-run/node": "*",
     "@remix-run/react": "*",
     "@remix-run/serve": "*",
+    "clsx": "^2.1.1",
     "isbot": "^4.1.0",
+    "lucide-react": "^0.541.0",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "tailwind-merge": "^3.3.1"
   },
   "devDependencies": {
     "@remix-run/dev": "*",
