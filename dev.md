@@ -231,3 +231,4 @@ interface VideoTrimState {
 **最終更新**: 2025年8月24日  
 **開発者**: AI Assistant  
 **ステータス**: β版完成、本格運用準備中
+

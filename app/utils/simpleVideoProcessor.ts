@@ -18,8 +18,14 @@ export async function createSimpleLoop(
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       
+      // MP4形式で試行、サポートされていない場合はWebMにフォールバック
+      let mimeType = 'video/mp4';
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        mimeType = 'video/webm;codecs=vp9';
+      }
+
       const mediaRecorder = new MediaRecorder(canvas.captureStream(), {
-        mimeType: 'video/webm;codecs=vp9',
+        mimeType: mimeType,
       });
       
       const chunks: Blob[] = [];
@@ -30,7 +36,7 @@ export async function createSimpleLoop(
       };
       
       mediaRecorder.onstop = () => {
-        const blob = new Blob(chunks, { type: 'video/webm' });
+        const blob = new Blob(chunks, { type: mimeType });
         resolve(blob);
       };
       
@@ -81,3 +87,4 @@ export function downloadBlob(blob: Blob, filename: string) {
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
+

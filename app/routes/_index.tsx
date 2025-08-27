@@ -23,11 +23,15 @@ interface VideoTrimState {
   startThumbnail: string | null;
   endThumbnail: string | null;
   isGeneratingThumbnails: boolean;
+  isDragging: boolean;
+  draggingMarker: 'start' | 'end' | null;
 }
 
 export default function Index() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const loopStartTimeRef = useRef<number>(0);
+  const loopEndTimeRef = useRef<number>(0);
   const [state, setState] = useState<VideoTrimState>({
     startTime: 0,
     endTime: 0,
@@ -41,6 +45,8 @@ export default function Index() {
     startThumbnail: null,
     endThumbnail: null,
     isGeneratingThumbnails: false,
+    isDragging: false,
+    draggingMarker: null,
   });
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -94,8 +100,9 @@ export default function Index() {
       setState(prev => ({ ...prev, currentTime }));
 
       // ループ機能：終了時間に達したら開始時間に戻る
-      if (currentTime >= state.endTime && state.endTime > 0) {
-        videoRef.current.currentTime = state.startTime;
+      // useRefを使って最新のループ時間を取得
+      if (currentTime >= loopEndTimeRef.current && loopEndTimeRef.current > 0) {
+        videoRef.current.currentTime = loopStartTimeRef.current;
       }
     }
   };
@@ -150,12 +157,12 @@ export default function Index() {
       );
 
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const filename = `loop-${timestamp}.webm`;
+      const filename = `loop-${timestamp}.mp4`;
       
       downloadBlob(trimmedBlob, filename);
     } catch (error) {
       console.error('Error processing video:', error);
-      alert('動画の処理中にエラーが発生したナリ！ブラウザでWebMフォーマットがサポートされていない可能性がありますナリ。');
+      alert('動画の処理中にエラーが発生したナリ！ブラウザで動画フォーマットがサポートされていない可能性がありますナリ。');
     } finally {
       setState(prev => ({ ...prev, isProcessing: false }));
     }
@@ -221,8 +228,7 @@ export default function Index() {
   };
 
   const previewLoop = () => {
-    // 現在の時間を終了時間として設定してからループ再生を開始
-    setState(prev => ({ ...prev, endTime: prev.currentTime }));
+    // 設定された開始時間から終了時間までをループ再生
     seekToTime(state.startTime);
     if (videoRef.current) {
       videoRef.current.play();
@@ -255,6 +261,88 @@ export default function Index() {
   const seekToPreviousSecond = () => {
     const newTime = Math.max(0, state.currentTime - 1);
     seekToTime(newTime);
+  };
+
+  // マーカードラッグ機能
+  const handleMarkerMouseDown = (marker: 'start' | 'end') => (event: React.MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    // ドラッグ開始時に動画が再生中だった場合、一時停止
+    const wasPlaying = state.isPlaying;
+    if (videoRef.current && wasPlaying) {
+      videoRef.current.pause();
+    }
+
+    setState(prev => ({
+      ...prev,
+      isDragging: true,
+      draggingMarker: marker,
+      isPlaying: false, // ドラッグ中は停止状態に
+    }));
+
+    document.addEventListener('mousemove', handleMarkerMouseMove);
+    document.addEventListener('mouseup', (e) => handleMarkerMouseUp(e, wasPlaying));
+  };
+
+  const handleMarkerMouseMove = (event: MouseEvent) => {
+    if (!state.isDragging || !state.draggingMarker || state.duration === 0) return;
+
+    const timelineElement = document.querySelector('[data-timeline]');
+    if (!timelineElement) return;
+
+    const rect = timelineElement.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const percentage = Math.max(0, Math.min(1, x / rect.width));
+    const newTime = percentage * state.duration;
+
+    if (state.draggingMarker === 'start') {
+      // 開始マーカーの場合は終了時間より前に制限
+      const clampedTime = Math.min(newTime, state.endTime - 0.01);
+      const newStartTime = Math.max(0, clampedTime);
+      setState(prev => ({
+        ...prev,
+        startTime: newStartTime,
+      }));
+      loopStartTimeRef.current = newStartTime;
+
+      // ドラッグ中に動画がループ範囲外に出た場合は調整
+      if (videoRef.current && videoRef.current.currentTime < newStartTime) {
+        videoRef.current.currentTime = newStartTime;
+      }
+    } else if (state.draggingMarker === 'end') {
+      // 終了マーカーの場合は開始時間より後に制限
+      const clampedTime = Math.max(newTime, state.startTime + 0.01);
+      const newEndTime = Math.min(state.duration, clampedTime);
+      setState(prev => ({
+        ...prev,
+        endTime: newEndTime,
+      }));
+      loopEndTimeRef.current = newEndTime;
+
+      // ドラッグ中に動画が終了時間を超えた場合は開始時間に戻す
+      if (videoRef.current && videoRef.current.currentTime >= newEndTime) {
+        videoRef.current.currentTime = state.startTime;
+      }
+    }
+  };
+
+  const handleMarkerMouseUp = (event?: MouseEvent, wasPlaying?: boolean) => {
+    setState(prev => ({
+      ...prev,
+      isDragging: false,
+      draggingMarker: null,
+      // ドラッグ開始時に再生中だった場合は再開
+      isPlaying: wasPlaying || false,
+    }));
+
+    // ドラッグ開始時に再生中だった場合は再開
+    if (wasPlaying && videoRef.current) {
+      videoRef.current.play();
+    }
+
+    document.removeEventListener('mousemove', handleMarkerMouseMove);
+    document.removeEventListener('mouseup', handleMarkerMouseUp);
   };
 
   // サムネイル生成関数
@@ -322,6 +410,20 @@ export default function Index() {
       updateThumbnails();
     }
   }, [state.startTime, state.endTime, state.videoUrl, state.duration]);
+
+  // 開始時間と終了時間が変更された時にuseRefも更新
+  useEffect(() => {
+    loopStartTimeRef.current = state.startTime;
+    loopEndTimeRef.current = state.endTime;
+  }, [state.startTime, state.endTime]);
+
+  // ドラッグイベントリスナーのクリーンアップ
+  useEffect(() => {
+    return () => {
+      document.removeEventListener('mousemove', handleMarkerMouseMove);
+      document.removeEventListener('mouseup', handleMarkerMouseUp);
+    };
+  }, []);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 text-white">
@@ -415,9 +517,9 @@ export default function Index() {
                   <button
                     onClick={previewLoop}
                     className="bg-yellow-600 hover:bg-yellow-700 px-4 py-3 rounded-full transition-colors font-medium"
-                    title="開始点から現在時間までをループ再生"
+                    title="設定されたループ範囲を再生"
                   >
-                    現在時間までループ再生
+                    ループ範囲再生
                   </button>
                   <button
                     onClick={downloadLoop}
@@ -482,7 +584,7 @@ export default function Index() {
                     <span>{formatTime(state.duration)}</span>
                   </div>
                   
-                  <div className="relative h-8 bg-slate-700 rounded-lg">
+                  <div className="relative h-8 bg-slate-700 rounded-lg" data-timeline>
                     {/* ベースタイムライン */}
                     <div className="absolute inset-0 rounded-lg overflow-hidden">
                       {/* 進行状況バー */}
@@ -490,7 +592,7 @@ export default function Index() {
                         className="bg-blue-500 h-full rounded-lg transition-all duration-100"
                         style={{ width: `${(state.currentTime / state.duration) * 100}%` }}
                       />
-                      
+
                       {/* ループ範囲表示（設定された範囲） */}
                       <div
                         className="absolute top-0 bg-green-400 bg-opacity-40 h-full border-l-2 border-r-2 border-green-400"
@@ -499,7 +601,7 @@ export default function Index() {
                           width: `${((state.endTime - state.startTime) / state.duration) * 100}%`,
                         }}
                       />
-                      
+
                       {/* 現在時間までのプレビュー範囲表示 */}
                       <div
                         className="absolute top-0 bg-yellow-400 bg-opacity-20 h-full border-l-2 border-yellow-400"
@@ -509,35 +611,62 @@ export default function Index() {
                         }}
                       />
                     </div>
-                    
+
                     {/* 開始時間マーカー */}
                     <div
-                      className="absolute top-0 w-3 h-8 bg-green-500 rounded cursor-pointer hover:bg-green-400 transition-colors flex items-center justify-center"
+                      className={`absolute top-0 w-3 h-8 bg-green-500 rounded cursor-pointer hover:bg-green-400 transition-colors flex items-center justify-center ${
+                        state.draggingMarker === 'start' ? 'scale-110 bg-green-300' : ''
+                      }`}
                       style={{ left: `${(state.startTime / state.duration) * 100}%`, transform: 'translateX(-50%)' }}
-                      title={`開始: ${formatTime(state.startTime)}`}
+                      title={`開始: ${formatTime(state.startTime)} (ドラッグで調整)`}
+                      onMouseDown={handleMarkerMouseDown('start')}
                     >
                       <div className="w-1 h-4 bg-white rounded"></div>
                     </div>
-                    
+
                     {/* 終了時間マーカー */}
                     <div
-                      className="absolute top-0 w-3 h-8 bg-red-500 rounded cursor-pointer hover:bg-red-400 transition-colors flex items-center justify-center"
+                      className={`absolute top-0 w-3 h-8 bg-red-500 rounded cursor-pointer hover:bg-red-400 transition-colors flex items-center justify-center ${
+                        state.draggingMarker === 'end' ? 'scale-110 bg-red-300' : ''
+                      }`}
                       style={{ left: `${(state.endTime / state.duration) * 100}%`, transform: 'translateX(-50%)' }}
-                      title={`終了: ${formatTime(state.endTime)}`}
+                      title={`終了: ${formatTime(state.endTime)} (ドラッグで調整)`}
+                      onMouseDown={handleMarkerMouseDown('end')}
                     >
                       <div className="w-1 h-4 bg-white rounded"></div>
                     </div>
-                    
+
                     {/* 現在時間マーカー */}
                     <div
                       className="absolute top-0 w-1 h-8 bg-blue-300 cursor-pointer"
                       style={{ left: `${(state.currentTime / state.duration) * 100}%`, transform: 'translateX(-50%)' }}
                     />
-                    
+
+                    {/* ドラッグ中の時間表示 */}
+                    {state.isDragging && state.draggingMarker && (
+                      <div
+                        className="absolute top-[-30px] px-2 py-1 bg-slate-900 text-white text-xs rounded shadow-lg pointer-events-none border border-slate-600"
+                        style={{
+                          left: `${
+                            state.draggingMarker === 'start'
+                              ? (state.startTime / state.duration) * 100
+                              : (state.endTime / state.duration) * 100
+                          }%`,
+                          transform: 'translateX(-50%)'
+                        }}
+                      >
+                        {state.draggingMarker === 'start'
+                          ? formatTime(state.startTime)
+                          : formatTime(state.endTime)
+                        }
+                      </div>
+                    )}
+
                     {/* タイムライン上のクリック可能エリア */}
                     <div
                       className="absolute inset-0 cursor-pointer"
                       onClick={(e) => {
+                        if (state.isDragging) return; // ドラッグ中はクリックを無効化
                         const rect = e.currentTarget.getBoundingClientRect();
                         const x = e.clientX - rect.left;
                         const time = (x / rect.width) * state.duration;
@@ -709,7 +838,7 @@ export default function Index() {
                   
                   <div className="text-center">
                     <div className="text-slate-400 text-sm mb-2">
-                      ※ 出力形式：WebM（ブラウザ内処理のため）
+                      ※ 出力形式：MP4（ブラウザ内処理のため）
                     </div>
                   </div>
                   
@@ -791,6 +920,8 @@ export default function Index() {
                         startThumbnail: null,
                         endThumbnail: null,
                         isGeneratingThumbnails: false,
+                        isDragging: false,
+                        draggingMarker: null,
                       });
                       if (fileInputRef.current) fileInputRef.current.value = '';
                     }}
